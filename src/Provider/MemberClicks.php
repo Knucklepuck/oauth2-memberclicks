@@ -96,13 +96,34 @@ class MemberClicks extends AbstractProvider
 	}
 
 	/**
+	 * Builds request options used for requesting an access token.
+	 *
+	 * @param  array $params
+	 * @return array
+	 */
+	protected function getAccessTokenOptions(array $params)
+	{
+			$options = ['headers' => [
+				'content-type' => 'application/x-www-form-urlencoded',
+				'Authorization' => 'Basic ' . base64_encode( $this->clientId . ':' . $this->clientSecret ),
+				'Cache-Control' => 'no-cache',
+			]];
+
+			if ($this->getAccessTokenMethod() === self::METHOD_POST) {
+					$options['body'] = $this->getAccessTokenBody($params);
+			}
+
+			return $options;
+	}
+
+	/**
 	 * Get authorization url to begin OAuth flow
 	 *
 	 * @return string
 	 */
 	public function getBaseAuthorizationUrl()
 	{
-		return $this->urlAuthorize ? $this->urlAuthorize : $this->domain . '/oauth/authorize';
+		return $this->urlAuthorize ? $this->urlAuthorize : $this->domain . '/oauth/v1/authorize';
 	}
 
 	/**
@@ -112,9 +133,9 @@ class MemberClicks extends AbstractProvider
 	 *
 	 * @return string
 	 */
-	public function getBaseAccessTokenUrl(array $params)
+	public function getBaseAccessTokenUrl(array $params = [])
 	{
-		return $this->urlAccessToken ? $this->urlAccessToken : $this->domain . '/oauth/token';
+		return $this->urlAccessToken ? $this->urlAccessToken : $this->domain . '/oauth/v1/token';
 	}
 
 	/**
@@ -126,7 +147,11 @@ class MemberClicks extends AbstractProvider
 	 */
 	public function getResourceOwnerDetailsUrl(AccessToken $token)
 	{
-		return $this->urlResourceOwnerDetails ? $this->urlResourceOwnerDetails : $this->domain . '/wp-json/wp/v2/users/me?context=edit';
+		return $this->urlResourceOwnerDetails ? $this->urlResourceOwnerDetails : $this->domain . '/api/v1/profile/me';
+	}
+
+	public function getProfileSearchUrl() {
+		return $this->domain . '/api/v1/profile/search';
 	}
 
 	/**
@@ -139,7 +164,7 @@ class MemberClicks extends AbstractProvider
 	 */
 	protected function getDefaultScopes()
 	{
-		return [];
+		return ['read'];
 	}
 
 	/**
@@ -167,6 +192,55 @@ class MemberClicks extends AbstractProvider
 	 */
 	protected function createResourceOwner(array $response, AccessToken $token)
 	{
-		return new WordPressResourceOwner($response);
+		return new MemberClicksResourceOwner($response);
+	}
+
+	/**
+	 * Perform a Resource Owner Password Credentials Authentication
+	 * @param string $username MemberClicks Username
+	 * @param string $password MemberClicks Password
+	 * @return Psr\Http\Message\ResponseInterface
+	 */
+	public function resourceOwnerAuthenticate( $username, $password )
+	{
+		$url = $this->getBaseAccessTokenUrl();
+		$request = $this->getRequest('POST', $url, $this->getAccessTokenOptions([
+			'grant_type' => 'password',
+			'scope' => 'read',
+			'username' => $username,
+			'password' => $password
+		]));
+		return $this->getResponse( $request );
+	}
+
+	/**
+	 * Perform a profile search and return results
+	 * @param AccessToken $token
+	 * @param array $query
+	 * @param number $pageSize
+	 * @return Psr\Http\Message\ResponseInterface
+	 */
+	public function profileSearch( AccessToken $token, $query, $pageSize = 10 )
+	{
+		$url = $this->getProfileSearchUrl();
+		$request = $this->getAuthenticatedRequest('POST', $url, $token, [
+			'body' => json_encode( $query ),
+		] );
+		$response = $this->getResponse($request);
+		$searchRequest = $this->getAuthenticatedRequest( 'GET', $response['profilesUrl'] . "&pageSize=$pageSize", $token );
+
+		return $this->getResponse($searchRequest);
+	}
+
+	/**
+	 * Perform an authenticated GET request
+	 *
+	 * @param AccessToken $token
+	 * @param string $url
+	 * @return Psr\Http\Message\ResponseInterface
+	 */
+	public function getAuthenticatedUrl( AccessToken $token, $url ) {
+		$getRequest = $this->getAuthenticatedRequest( 'GET', $url, $token );
+		return $this->getResponse($getRequest);
 	}
 }
